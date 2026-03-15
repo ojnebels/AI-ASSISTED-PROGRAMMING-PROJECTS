@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NSCP 2015 Rectangular Beam Design</title>
+    <title>NSCP 2015 Beam Design - 3D Visualization</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -13,7 +13,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 900px;
+            max-width: 1000px;
             margin: auto;
             background: white;
             padding: 30px;
@@ -29,10 +29,17 @@
             color: #2c3e50;
             border-bottom: 2px solid #3498db;
             padding-bottom: 10px;
+            margin-top: 0;
         }
-        .input-section, .output-section {
+        .input-section {
             flex: 1;
             min-width: 300px;
+        }
+        .output-section {
+            flex: 1.5;
+            min-width: 400px;
+            display: flex;
+            flex-direction: column;
         }
         .form-group {
             margin-bottom: 15px;
@@ -74,23 +81,47 @@
         .results-box p {
             margin: 8px 0;
         }
-        canvas {
-            display: block;
-            margin: 0 auto;
-            background: #fff;
+        #canvas-container {
+            flex-grow: 1;
+            width: 100%;
+            min-height: 400px;
+            background: #e9ecef;
             border: 1px dashed #bdc3c7;
             border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .controls-hint {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            pointer-events: none;
         }
         .error {
             color: #e74c3c;
             font-weight: bold;
         }
     </style>
+    
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
 
 <div class="container">
-    <h1>NSCP 2015 Rectangular Beam Designer</h1>
+    <h1>NSCP 2015 Rectangular Beam Designer (3D)</h1>
     
     <div class="input-section">
         <h3>Input Parameters</h3>
@@ -122,7 +153,7 @@
             <label>Rebar Diameter (mm):</label>
             <input type="number" id="db" value="20" step="any">
         </div>
-        <button onclick="calculateDesign()">Calculate & Visualize</button>
+        <button id="calcBtn">Calculate & Visualize</button>
     </div>
 
     <div class="output-section">
@@ -130,43 +161,81 @@
         <div class="results-box" id="results">
             <p>Enter values and click calculate.</p>
         </div>
-        <h3>Cross-Section Visualization</h3>
-        <canvas id="beamCanvas" width="350" height="400"></canvas>
+        <h3>Interactive 3D Cross-Section</h3>
+        <div id="canvas-container">
+            <div class="controls-hint">Left Click: Rotate | Right Click: Pan | Scroll: Zoom</div>
+        </div>
     </div>
 </div>
 
-<script>
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- Three.js Setup ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe9ecef);
+
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(200, 500, 300);
+    scene.add(dirLight);
+
+    // Group to hold beam components so we can clear them easily
+    let beamGroup = new THREE.Group();
+    scene.add(beamGroup);
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    // Animation Loop
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Design Logic ---
     function calculateDesign() {
-        // 1. Get Inputs
-        const Mu = parseFloat(document.getElementById('mu').value) * 1e6; // Convert kN-m to N-mm
+        const Mu = parseFloat(document.getElementById('mu').value) * 1e6;
         const fc = parseFloat(document.getElementById('fc').value);
         const fy = parseFloat(document.getElementById('fy').value);
         const b = parseFloat(document.getElementById('b').value);
         const h = parseFloat(document.getElementById('h').value);
         const d = parseFloat(document.getElementById('d').value);
         const db = parseFloat(document.getElementById('db').value);
-        
         const resultsDiv = document.getElementById('results');
         
-        // 2. Constants and Assumptions (Singly Reinforced)
-        const phi = 0.90; // Assuming tension-controlled initially
-        
-        // 3. Calculate Required Rho
+        const phi = 0.90;
         const Rn = Mu / (phi * b * Math.pow(d, 2));
         const discriminant = 1 - (2 * Rn) / (0.85 * fc);
         
         if (discriminant < 0) {
-            resultsDiv.innerHTML = `<p class="error">Error: Section requires compression reinforcement (Doubly Reinforced). Increase dimensions or f'c.</p>`;
-            drawBeam(b, h, d, db, 0);
+            resultsDiv.innerHTML = `<p class="error">Error: Section requires compression reinforcement. Increase dimensions or f'c.</p>`;
+            drawBeam3D(b, h, d, db, 0);
             return;
         }
         
         const rhoRequired = (0.85 * fc / fy) * (1 - Math.sqrt(discriminant));
-        
-        // 4. Calculate As
         let As = rhoRequired * b * d;
         
-        // 5. Check Minimum As (NSCP 2015 409.6.1.2)
         const AsMin1 = (0.25 * Math.sqrt(fc) / fy) * b * d;
         const AsMin2 = (1.4 / fy) * b * d;
         const AsMin = Math.max(AsMin1, AsMin2);
@@ -177,8 +246,6 @@
             controllingCondition = "Minimum Reinforcement (NSCP 409.6.1.2)";
         }
         
-        // 6. Strain Check (Tension-controlled verification)
-        // Beta1 calculation (NSCP 422.2.2.4.3)
         let beta1 = 0.85;
         if (fc > 28) {
             beta1 = 0.85 - 0.05 * ((fc - 28) / 7);
@@ -189,98 +256,91 @@
         const c = a / beta1;
         const strain_t = 0.003 * ((d - c) / c);
         
-        let strainMessage = `<span style="color: green;">Tension-controlled (φ = 0.90 applies)</span>`;
+        let strainMessage = `<span style="color: green;">Tension-controlled (φ = 0.90)</span>`;
         if (strain_t < 0.005) {
-            strainMessage = `<span class="error">Transition/Compression controlled! εt = ${strain_t.toFixed(4)}. Redesign section.</span>`;
+            strainMessage = `<span class="error">Transition/Compression controlled! εt = ${strain_t.toFixed(4)}.</span>`;
         }
 
-        // 7. Calculate number of bars
         const Ab = (Math.PI / 4) * Math.pow(db, 2);
         let nBars = Math.ceil(As / Ab);
-        if (nBars < 2) nBars = 2; // Practical minimum for a rectangular beam
-        
+        if (nBars < 2) nBars = 2;
         const AsProvided = nBars * Ab;
 
-        // 8. Display Results
         resultsDiv.innerHTML = `
             <p><strong>Required As:</strong> ${As.toFixed(2)} mm² (${controllingCondition})</p>
-            <p><strong>Minimum As:</strong> ${AsMin.toFixed(2)} mm²</p>
             <p><strong>Steel Strain (εt):</strong> ${strain_t.toFixed(5)} - ${strainMessage}</p>
-            <p><strong>Provided Bars:</strong> ${nBars} - Ø${db}mm</p>
-            <p><strong>Provided As:</strong> ${AsProvided.toFixed(2)} mm²</p>
-            <p><strong>Neutral Axis (c):</strong> ${c.toFixed(2)} mm</p>
+            <p><strong>Provided Bars:</strong> ${nBars} - Ø${db}mm (As = ${AsProvided.toFixed(2)} mm²)</p>
         `;
         
-        // 9. Draw Beam
-        drawBeam(b, h, d, db, nBars);
+        drawBeam3D(b, h, d, db, nBars);
     }
 
-    function drawBeam(b, h, d, db, nBars) {
-        const canvas = document.getElementById('beamCanvas');
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // --- 3D Drawing Logic ---
+    function drawBeam3D(b, h, d, db, nBars) {
+        // Clear previous beam
+        scene.remove(beamGroup);
+        beamGroup = new THREE.Group();
+        scene.add(beamGroup);
 
-        // Drawing scaling factors to fit inside the canvas
-        const scale = Math.min((canvas.width - 100) / b, (canvas.height - 100) / h);
-        const drawW = b * scale;
-        const drawH = h * scale;
+        const beamLength = 1000; // Visualize 1 meter of the beam
+
+        // 1. Concrete Block (Transparent)
+        const concreteGeo = new THREE.BoxGeometry(b, h, beamLength);
+        const concreteMat = new THREE.MeshStandardMaterial({ 
+            color: 0xa0a0a0, 
+            transparent: true, 
+            opacity: 0.35,
+            roughness: 0.8
+        });
+        const concreteMesh = new THREE.Mesh(concreteGeo, concreteMat);
         
-        // Center the drawing
-        const offsetX = (canvas.width - drawW) / 2;
-        const offsetY = (canvas.height - drawH) / 2 - 10;
+        // Draw concrete wireframe edges for better definition
+        const edges = new THREE.EdgesGeometry(concreteGeo);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
+        beamGroup.add(concreteMesh);
+        beamGroup.add(line);
 
-        // Draw Concrete Section (Rectangle)
-        ctx.beginPath();
-        ctx.rect(offsetX, offsetY, drawW, drawH);
-        ctx.fillStyle = '#e0e0e0';
-        ctx.fill();
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
+        // 2. Rebars
         if (nBars > 0) {
-            // Rebar drawing math
-            const coverBottom = (h - d) * scale;
-            const drawDb = db * scale;
-            const rebarY = offsetY + drawH - coverBottom;
+            const rebarGeo = new THREE.CylinderGeometry(db / 2, db / 2, beamLength, 16);
+            const rebarMat = new THREE.MeshStandardMaterial({ 
+                color: 0x3a3a3a, // Dark steel color
+                metalness: 0.6,
+                roughness: 0.4
+            });
+
+            // Calculate positions
+            // Center of the beam is at Y=0. Top is h/2, bottom is -h/2.
+            // Effective depth 'd' is measured from top (h/2).
+            const rebarY = (h / 2) - d; 
             
-            // Stirrup allowance & spacing
-            const sideCover = 40 * scale; // Assuming 40mm clear cover to stirrups roughly
-            const availableWidth = drawW - (2 * sideCover) - drawDb;
+            const sideCover = 40; // Assumed 40mm cover
+            const availableWidth = b - (2 * sideCover) - db;
             let spacing = 0;
-            if (nBars > 1) spacing = availableWidth / (nBars - 1);
-
-            // Draw Rebars
-            ctx.fillStyle = '#2c3e50';
-            for (let i = 0; i < nBars; i++) {
-                const rebarX = offsetX + sideCover + (drawDb / 2) + (i * spacing);
-                ctx.beginPath();
-                ctx.arc(rebarX, rebarY, drawDb / 2, 0, 2 * Math.PI);
-                ctx.fill();
+            if (nBars > 1) {
+                spacing = availableWidth / (nBars - 1);
             }
+            const startX = -availableWidth / 2;
 
-            // Draw Effective Depth Line
-            ctx.beginPath();
-            ctx.setLineDash([5, 5]);
-            ctx.moveTo(offsetX - 20, offsetY);
-            ctx.lineTo(offsetX + drawW + 20, offsetY);
-            ctx.moveTo(offsetX - 20, rebarY);
-            ctx.lineTo(offsetX + drawW + 20, rebarY);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Text annotations
-            ctx.fillStyle = '#c0392b';
-            ctx.font = '14px sans-serif';
-            ctx.fillText(`b = ${b} mm`, offsetX + drawW/2 - 30, offsetY - 15);
-            ctx.fillText(`h = ${h} mm`, offsetX + drawW + 15, offsetY + drawH/2);
-            ctx.fillText(`d = ${d} mm`, offsetX - 70, offsetY + (rebarY - offsetY)/2);
-            ctx.fillText(`${nBars} - Ø${db}mm`, offsetX + drawW/2 - 40, offsetY + drawH + 30);
+            for (let i = 0; i < nBars; i++) {
+                const rebarMesh = new THREE.Mesh(rebarGeo, rebarMat);
+                rebarMesh.rotation.x = Math.PI / 2; // Lay flat along Z axis
+                rebarMesh.position.set(startX + (i * spacing), rebarY, 0);
+                beamGroup.add(rebarMesh);
+            }
         }
+
+        // Adjust camera to fit the beam
+        const maxDim = Math.max(b, h, beamLength);
+        camera.position.set(maxDim * 0.8, maxDim * 0.8, maxDim * 1.2);
+        controls.target.set(0, 0, 0);
+        controls.update();
     }
 
-    // Run once on load
-    window.onload = calculateDesign;
+    // Attach event listener and run initial calculation
+    document.getElementById('calcBtn').addEventListener('click', calculateDesign);
+    // Add slight delay on initial load to ensure container is sized
+    setTimeout(calculateDesign, 100);
 </script>
 
 </body>
